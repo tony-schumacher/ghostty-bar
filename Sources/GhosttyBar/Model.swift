@@ -333,21 +333,28 @@ final class TabModel: ObservableObject {
 
     private var emptyText: String { running ? "No tabs" : "Ghostty not running" }
 
+    /// "9 tabs", or "9 tabs · 2 remote" once external sources contribute items.
+    var countLabel: String {
+        let remote = tabs.filter(\.isExternal).count
+        let local = tabs.count - remote
+        return remote > 0 ? "\(local) tabs · \(remote) remote" : "\(local) tabs"
+    }
+
     var summary: String {
         if tabs.isEmpty { return emptyText }
-        return "\(tabs.count) tabs · \(busyCount) working · \(unreadCount) unread"
+        return "\(countLabel) · \(busyCount) working · \(unreadCount) unread"
     }
 
     /// Header line in the window: the unread count lives in the filter pill next to it.
     var windowSummary: String {
         if tabs.isEmpty { return emptyText }
-        return "\(tabs.count) tabs · \(busyCount) working"
+        return "\(countLabel) · \(busyCount) working"
     }
 
     /// Narrow-window variant of `windowSummary`: "11 tabs · 3 ◐".
     var windowSummaryShort: String {
         if tabs.isEmpty { return windowSummary }
-        return busyCount > 0 ? "\(tabs.count) tabs · \(busyCount) ◐" : "\(tabs.count) tabs"
+        return busyCount > 0 ? "\(countLabel) · \(busyCount) ◐" : countLabel
     }
 
     /// Ghostty window ids in first-seen order (all windows, so "Window N" numbering stays stable when filtering).

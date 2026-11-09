@@ -112,7 +112,8 @@ final class ExternalSources {
 
     private func checkConfig() {
         let path = Self.configURL.path
-        let attrs = try? FileManager.default.attributesOfItem(atPath: path)
+        // Resolve symlinks (dotfile managers) so edits to the target file are seen.
+        let attrs = try? FileManager.default.attributesOfItem(atPath: Self.configURL.resolvingSymlinksInPath().path)
         let stamp = attrs.map { a in
             "\((a[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)/\((a[.size] as? Int) ?? 0)"
         }
@@ -240,10 +241,11 @@ final class ExternalSources {
 
         if done.wait(timeout: .now() + c.timeout) == .timedOut {
             p.terminate()
-            if done.wait(timeout: .now() + 1) == .timedOut {
-                kill(p.processIdentifier, SIGKILL)
-                _ = done.wait(timeout: .now() + 1)
-            }
+            _ = done.wait(timeout: .now() + 1)
+            // The child leads its own process group; kill the whole group so children that
+            // ignore SIGTERM (or outlive sh) are not orphaned on every timeout.
+            kill(-p.processIdentifier, SIGKILL)
+            _ = done.wait(timeout: .now() + 1)
             return SourceResult(items: nil, error: "timed out", detail: "after \(c.timeout) s")
         }
         let data = (try? Data(contentsOf: outURL)) ?? Data()
