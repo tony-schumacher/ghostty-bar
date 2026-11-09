@@ -25,8 +25,10 @@ Use it from the menu bar, from a small floating window, or with a global hotkey.
 - Click a tab (in the menu or the window) to jump to it.
 - Global hotkey ⌃⌥J jumps to the oldest unread tab, from any app.
 - Optional macOS notification when a tab finishes. Off by default.
+- **External sources**: list agent sessions from tmux, other machines or bots next to your Ghostty tabs,
+  through any command that prints a small JSON list.
 - Demo mode with sample tabs, so you can try it without Ghostty.
-- Native Swift, about 1,600 lines, no dependencies. Nothing leaves your Mac.
+- Native Swift, about 2,200 lines, no dependencies. GhosttyBar itself makes no network connections.
 
 | Unread filter | Menu bar dropdown |
 | --- | --- |
@@ -158,11 +160,109 @@ make demo
 build/GhosttyBar.app/Contents/MacOS/GhosttyBar --demo
 ```
 
-Demo mode shows eight sample tabs in two windows and never talks to Ghostty. It uses separate settings
+Demo mode shows eight sample tabs in two windows plus a sample external source (`build-server`) and never
+talks to Ghostty or runs any source command. It uses separate settings
 that are removed when the demo quits (Quit, Ctrl-C or `kill`), logs only to the terminal, registers no
 hotkey, posts no notifications and never adds itself as a login item (those menu items are shown but do
 nothing), so it can run next to your normal GhosttyBar. All screenshots on this page are from demo mode;
 `kill -USR2` opens the demo's dropdown so it can be captured from a script.
+
+## External sources
+
+GhosttyBar can also list sessions that don't live in a Ghostty tab: Claude Code in tmux on a build server,
+an agent on another Mac, a chat bot waiting for an answer. You connect them with a small command that prints
+JSON. Each source becomes its own group after the Ghostty windows, with the same unread tracking, filter,
+hotkey, notifications and menu bar count.
+
+![The window with a "build-server" group below the Ghostty windows](docs/external-sources.png)
+
+### Config
+
+Create `~/.config/ghosttybar/sources.json`:
+
+```json
+{
+  "sources": [
+    { "name": "build-server", "command": "~/bin/tmux-source.sh me@build-server", "interval": 5, "timeout": 4 },
+    { "name": "local tmux", "command": "~/bin/tmux-source.sh" }
+  ]
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `name` | Group header in the list. Must be unique. |
+| `command` | Run with `/bin/sh -c`, so pipes, `~` and arguments work. `/opt/homebrew/bin` and `/usr/local/bin` are added to `PATH`. |
+| `interval` | Seconds between runs. Default 5, minimum 2. |
+| `timeout` | Seconds before the command is killed and the source shows as timed out. Default 4. |
+
+GhosttyBar picks up changes to the file within a few seconds, no restart needed. An invalid file is logged
+and ignored (the previous sources keep running). Without the file, nothing runs. To try a config without
+touching your normal setup, run the demo with it: `GHOSTTYBAR_SOURCES=./sources.json make demo`.
+
+### Command output
+
+The command prints one JSON object on stdout and exits 0:
+
+```json
+{
+  "items": [
+    { "id": "build", "title": "fix flaky test", "state": "busy", "since": 1794200000, "subtitle": "ci" },
+    { "id": "deploy", "title": "release checklist", "state": "waiting", "url": "https://example.com/deploy/42" }
+  ],
+  "error": null
+}
+```
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `id` | yes | Stable id of the item within this source (string or number). Read state is tracked by it. |
+| `title` | yes | Row text. |
+| `state` | yes | `busy` (working), `idle` (done), `waiting` (needs you now), `plain` (no agent status). |
+| `since` | no | Unix seconds. For `busy` when it started (shows `for 4 min`), for `idle` / `waiting` when it finished. |
+| `subtitle` | no | Dim text after the title, e.g. the machine or channel. |
+| `url` | no | Opened when you click the item (any URL macOS can open: `https:`, `ssh:`, an app's own scheme). |
+| `error` | no | A non-empty string marks the source offline and shows the message in the group header. |
+
+How items become unread:
+
+- `busy` → `idle` or `waiting`: finished, unread (like a Ghostty tab).
+- `waiting` on first sight, or after any other state: unread right away (like the bell).
+- An item becomes read when you click it (then its `url` opens), when it turns `busy` again, or with
+  **Mark all as read**. GhosttyBar can't see you looking at another machine, so there is no "looked at"
+  rule for external items. **Next unread tab** (⌃⌥J) marks the item read and opens its `url`, if it has one.
+- The last state of every item is kept across restarts of GhosttyBar, so a session that finished while
+  GhosttyBar was not running still shows up as unread.
+
+When the command fails, times out or prints something that isn't valid JSON, the group header shows
+`<name> · offline` (or `timed out`, or the `error` text) and the last known items stay in the list, dimmed.
+Details go to the log. A slow or broken source never blocks the app: each command runs in the background,
+at most one run per source at a time.
+
+### Example: Claude Code in tmux, local or over ssh
+
+[`examples/tmux-source.sh`](examples/tmux-source.sh) lists the tmux panes that run Claude Code, with the
+state taken from the pane title (the same glyphs GhosttyBar reads from Ghostty). Copy it somewhere and use it
+as a source:
+
+```sh
+cp examples/tmux-source.sh ~/bin/ && chmod +x ~/bin/tmux-source.sh
+~/bin/tmux-source.sh                  # tmux on this Mac
+~/bin/tmux-source.sh me@build-server  # tmux on another machine, over ssh
+~/bin/tmux-source.sh --all            # also panes that don't run Claude Code
+~/bin/tmux-source.sh -L work          # a tmux server started with `tmux -L work`
+```
+
+For a remote machine you need key-based ssh login (the script uses `BatchMode`, so it never prompts). The
+first run opens a shared ssh connection (`ControlMaster`, kept for 10 minutes), so polling every few seconds
+reuses it instead of doing a new handshake each time. A window whose bell flag is set counts as `waiting`.
+The script needs only `sh`, `awk` and `tmux`, and always prints valid JSON, with problems in `error`.
+
+### Writing your own source
+
+Any language works, as long as the command prints the JSON above and returns within the timeout. Some ideas:
+a bot that writes its state to a file (`cat ~/.agent/state.json`), a `curl` to a status endpoint, a query
+over ssh. Keep it fast: it runs every few seconds.
 
 ## How it works
 
@@ -180,7 +280,8 @@ A tab that goes from working to idle becomes unread unless you are looking at it
 - GhosttyBar polls every 0.7 seconds while Ghostty is the active app (to notice quickly that you looked at
   a tab) and every 2 seconds otherwise. The AppleScript calls run on a background queue.
 - It only polls while Ghostty is running, so it never launches Ghostty.
-- It makes no network connections. Everything stays on your Mac.
+- It makes no network connections. Everything stays on your Mac. External source commands are yours: they
+  do whatever you configure, GhosttyBar only runs them and reads their output.
 - Any tool that sets the same title glyphs works too, not only Claude Code.
 
 ## Caveats

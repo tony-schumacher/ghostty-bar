@@ -14,11 +14,18 @@ struct Tab: Equatable {
     let title: String
     let state: TabState
     let bell: Bool         // title carried Ghostty's 🔔 (bell rang, e.g. Claude asks for permission/input)
-    let directory: String  // ~-shortened
+    let directory: String  // ~-shortened; for external items the subtitle
+    /// External items only (see External.swift): source name, link opened on click, and the source's own
+    /// timestamp (busy: start, idle/waiting: when it finished). nil for Ghostty tabs.
+    var source: String? = nil
+    var url: String? = nil
+    var since: Date? = nil
+
+    var isExternal: Bool { source != nil }
 
     func with(selected: Bool, inFrontWindow: Bool) -> Tab {
         Tab(windowID: windowID, id: id, index: index, selected: selected, inFrontWindow: inFrontWindow,
-            title: title, state: state, bell: bell, directory: directory)
+            title: title, state: state, bell: bell, directory: directory, source: source, url: url, since: since)
     }
 }
 

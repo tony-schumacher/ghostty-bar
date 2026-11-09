@@ -96,7 +96,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     func post(_ tab: Tab, bell: Bool) {
         let c = UNMutableNotificationContent()
         c.title = bell ? "Waiting for you: \(tab.title)" : "Done: \(tab.title)"
-        c.body = tab.directory
+        c.body = tab.source.map { tab.directory.isEmpty ? $0 : "\($0) · \(tab.directory)" } ?? tab.directory
         c.userInfo = ["tab": tab.id]
         // no sound on purpose: a silent banner is enough
         center.add(UNNotificationRequest(identifier: "tab-\(tab.id)", content: c, trigger: nil)) { error in

@@ -15,11 +15,13 @@ enum Layout {
     static let maxHeightShare: CGFloat = 0.7
 
     @MainActor static func contentHeight(_ m: TabModel) -> CGFloat {
-        if m.tabs.isEmpty { return 4 }
+        if !m.hasContent { return 4 }
         if m.allReadEmptyState { return rowH + pad }
-        let wins = TabListView.windowGroups(m).count
-        var h = CGFloat(m.visibleTabs.count) * rowH
-        if wins > 1 { h += CGFloat(wins) * headerH + CGFloat(wins - 1) * headerGap }
+        var h: CGFloat = 0
+        for (i, g) in m.groups.enumerated() {
+            h += CGFloat(g.tabs.count) * rowH
+            if g.title != nil { h += headerH + (i > 0 ? headerGap : 0) }
+        }
         return h + pad
     }
 }
@@ -32,6 +34,7 @@ struct TabRow: View {
     let glyph: String
     let detail: String?
     let lowOpacity: Bool
+    var dim = false       // offline external source: last known state
     let onClick: () -> Void
     @State private var hover = false
 
@@ -48,6 +51,14 @@ struct TabRow: View {
                 .foregroundStyle(titleColor)
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .layoutPriority(1)
+            if tab.isExternal && !tab.directory.isEmpty {
+                Text(tab.directory)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.45))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
             Spacer(minLength: 4)
             if let detail {
                 Text(detail)
@@ -67,11 +78,12 @@ struct TabRow: View {
             RoundedRectangle(cornerRadius: 5)
                 .fill(hover ? Color.white.opacity(0.13) : (unread ? Color.orange.opacity(0.14) : .clear))
         )
+        .opacity(dim ? 0.5 : 1)
         .shadow(color: .black.opacity(lowOpacity ? 0.9 : 0), radius: 2, y: 1)
         .contentShape(Rectangle())
         .onHover { hover = $0 }
         .onTapGesture(perform: onClick)
-        .help(tab.directory)
+        .help(tab.isExternal ? (tab.url ?? tab.directory) : tab.directory)
     }
 
     private var glyphColor: Color {
@@ -144,15 +156,6 @@ struct TabListView: View {
     let onClick: (Tab) -> Void
     var onFilter: (Bool) -> Void = { _ in }
 
-    /// (window number, its visible tabs); windows without visible tabs are skipped, numbering stays stable.
-    @MainActor static func windowGroups(_ m: TabModel) -> [(number: Int, id: String, tabs: [Tab])] {
-        let shown = m.visibleTabs
-        return m.windowIDs.enumerated().compactMap { wi, wid in
-            let ts = shown.filter { $0.windowID == wid }
-            return ts.isEmpty ? nil : (wi + 1, wid, ts)
-        }
-    }
-
     private func header(_ summary: String, compactPill: Bool, low: Bool) -> some View {
         HStack(spacing: 6) {
             Text(summary)
@@ -162,7 +165,7 @@ struct TabListView: View {
                 .truncationMode(.tail)
                 .shadow(color: .black.opacity(low ? 0.9 : 0), radius: 2, y: 1)
             Spacer(minLength: 4)
-            if !model.tabs.isEmpty {
+            if model.hasContent {
                 FilterPill(unreadOnly: model.unreadOnly, unreadCount: model.unreadCount,
                            compact: compactPill, lowOpacity: low, onSelect: onFilter)
                     .layoutPriority(1)
@@ -172,8 +175,7 @@ struct TabListView: View {
 
     var body: some View {
         let low = model.opacity < 0.7
-        let groups = Self.windowGroups(model)
-        let multi = model.windowIDs.count > 1
+        let groups = model.groups
         VStack(alignment: .leading, spacing: 0) {
             // ViewThatFits picks the first variant whose ideal width fits: narrow windows shorten the
             // summary first, then the pill ("All | ● 2"); the pill is never clipped.
@@ -199,23 +201,35 @@ struct TabListView: View {
                                 .frame(height: Layout.rowH)
                         }
                         ForEach(groups, id: \.id) { g in
-                            if multi && groups.count > 1 {
-                                Text("Window \(g.number)")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundStyle(.white.opacity(0.55))
-                                    .shadow(color: .black.opacity(low ? 0.9 : 0), radius: 2, y: 1)
-                                    .padding(.leading, 12)
-                                    .frame(height: Layout.headerH, alignment: .bottom)
-                                    .padding(.top, g.id == groups.first?.id ? 0 : Layout.headerGap)
+                            if let title = g.title {
+                                HStack(spacing: 0) {
+                                    Text(title)
+                                        .font(.system(size: 11, weight: .bold))
+                                        .foregroundStyle(.white.opacity(0.55))
+                                        .lineLimit(1)
+                                    if let note = g.note {
+                                        Text(" · " + note)
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(Color.orange.opacity(0.7))
+                                            .lineLimit(1)
+                                            .truncationMode(.tail)
+                                    }
+                                }
+                                .shadow(color: .black.opacity(low ? 0.9 : 0), radius: 2, y: 1)
+                                .padding(.leading, 12)
+                                .padding(.trailing, 8)
+                                .frame(height: Layout.headerH, alignment: .bottom)
+                                .padding(.top, g.id == groups.first?.id ? 0 : Layout.headerGap)
                             }
                             ForEach(g.tabs, id: \.id) { t in
                                 TabRow(tab: t, status: model.status(t), glyph: model.glyph(t),
-                                       detail: model.detail(t, now: ctx.date), lowOpacity: low) { onClick(t) }
+                                       detail: model.detail(t, now: ctx.date), lowOpacity: low,
+                                       dim: g.dim) { onClick(t) }
                             }
                         }
                     }
                     .padding(.horizontal, 4)
-                    .padding(.bottom, model.tabs.isEmpty ? 0 : Layout.pad)
+                    .padding(.bottom, model.hasContent ? Layout.pad : 0)
                 }
                 .scrollIndicators(.automatic)
             }

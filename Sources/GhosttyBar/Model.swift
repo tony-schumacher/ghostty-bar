@@ -11,16 +11,35 @@ struct UnreadMark: Codable, Equatable {
     var bell: Bool  // true: the tab rang the bell (Claude wants input), false: Claude finished (busy → idle)
 }
 
+/// A titled block of rows: one Ghostty window, or one external source.
+struct TabGroup {
+    let id: String
+    let title: String?   // nil: no header (a single Ghostty window and nothing else)
+    let note: String?    // external source problem, shown after the title ("offline")
+    let tabs: [Tab]
+    let dim: Bool        // offline source: last known items, dimmed
+}
+
+/// Latest state of one external source.
+struct ExternalGroup: Equatable {
+    let name: String
+    var items: [Tab] = []
+    var error: String?   // non-nil: offline, `items` are the last known ones
+}
+
 @MainActor
 final class TabModel: ObservableObject {
+    /// Ghostty tabs followed by the items of all external sources (in config order).
     @Published private(set) var tabs: [Tab] = []
     @Published private(set) var unread: [String: UnreadMark] = [:]
     @Published private(set) var busySince: [String: Date] = [:]
     @Published private(set) var running = false
+    @Published private(set) var external: [ExternalGroup] = []
     @Published var opacity: Double = 1.0
     @Published var unreadOnly = false
 
     private let settings: AppSettings
+    private var ghosttyTabs: [Tab] = []
     private var lastState: [String: TabState] = [:]
     private var lastBell: [String: Bool] = [:]
     /// Tab that is currently the visible one (frontmost Ghostty, front window, selected) and since when.
@@ -40,10 +59,16 @@ final class TabModel: ObservableObject {
         unread = settings.unread
         busySince = settings.busySince
         unreadOnly = settings.unreadOnly
+        // External items keep their last state across restarts, so a change while GhosttyBar was not
+        // running still counts as an edge, and an item you already read stays read.
+        for (id, v) in settings.externalLast {
+            lastState[id] = v == "busy" ? .busy : v == "plain" ? .plain : .idle
+            lastBell[id] = v == "waiting"
+        }
     }
 
-    /// Applies one poll result. `fresh == nil` = AppleScript error (keep tabs and marks, but still track
-    /// whether Ghostty runs, so a denied/pending permission shows "No tabs", not "Ghostty not running").
+    /// Applies one Ghostty poll result. `fresh == nil` = AppleScript error (keep tabs and marks, but still
+    /// track whether Ghostty runs, so a denied/pending permission shows "No tabs", not "Ghostty not running").
     /// `running` = Ghostty is running. `front` = Ghostty was frontmost for the whole fetch (caller ANDs
     /// before and after the snapshot).
     /// Returns whether anything visible changed and which tabs just became unread (for notifications).
@@ -64,12 +89,72 @@ final class TabModel: ObservableObject {
             if isRunning != running { running = isRunning; return (true, []) }
             return (false, [])
         }
+        let visibleId = front ? fresh.first(where: { $0.inFrontWindow && $0.selected })?.id : nil
+        if visibleId != visibleTab { visibleTab = visibleId; visibleSince = now }
+        let r = ingest(fresh, owns: { !isExternalID($0) }, front: front, now: now)
+        let changed = fresh != ghosttyTabs || r.marksChanged || isRunning != running
+        ghosttyTabs = fresh
+        running = isRunning
+        if changed { publishTabs() }
+        return (changed, r.added)
+    }
+
+    /// Applies one run of an external source. `items == nil`: offline (keep the last items, dimmed).
+    /// External items are never "looked at" (GhosttyBar can't see you looking at another machine): they
+    /// become read on click, when they turn busy again, or with Mark all as read.
+    @discardableResult
+    func applyExternal(_ name: String, items: [ExternalItem]?, error: String?,
+                       now: Date = Date()) -> (changed: Bool, newlyUnread: [Tab]) {
+        guard let gi = external.firstIndex(where: { $0.name == name }) else { return (false, []) }
+        var g = external[gi]
+        guard let items else {
+            g.error = error ?? "offline"
+            guard g != external[gi] else { return (false, []) }
+            external[gi] = g
+            publishTabs()
+            return (true, [])
+        }
+        let fresh = items.enumerated().map { $0.element.tab(source: name, index: $0.offset + 1, now: now) }
+        let prefix = externalGroupID(name) + extSep
+        let r = ingest(fresh, owns: { $0.hasPrefix(prefix) }, front: false, now: now)
+        g.items = fresh
+        g.error = nil
+        let changed = g != external[gi] || r.marksChanged
+        external[gi] = g
+        if changed { publishTabs() }
+        persistExternalLast()
+        return (changed, r.added)
+    }
+
+    /// The configured external sources, in order. Groups of removed sources disappear with their marks.
+    func setExternalSources(_ names: [String]) {
+        let old = Dictionary(external.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
+        external = names.map { old[$0] ?? ExternalGroup(name: $0) }
+        let keep = Set(names)
+        let gone: (String) -> Bool = { id in externalSource(ofID: id).map { !keep.contains($0) } ?? false }
+        let before = (unread.count, busySince.count)
+        unread = unread.filter { !gone($0.key) }
+        busySince = busySince.filter { !gone($0.key) }
+        lastState = lastState.filter { !gone($0.key) }
+        lastBell = lastBell.filter { !gone($0.key) }
+        if before != (unread.count, busySince.count) { persist() }
+        persistExternalLast()
+        publishTabs()
+    }
+
+    private func publishTabs() {
+        let all = ghosttyTabs + external.flatMap(\.items)
+        if all != tabs { tabs = all }
+    }
+
+    /// Edge detection for one batch of tabs (all Ghostty tabs, or all items of one external source).
+    /// `owns` says which ids this batch covers, so state of ids missing from it can be dropped.
+    private func ingest(_ fresh: [Tab], owns: (String) -> Bool, front: Bool,
+                       now: Date) -> (marksChanged: Bool, added: [Tab]) {
         let ids = Set(fresh.map(\.id))
         var newUnread = unread
         var newBusy = busySince
         var added: [Tab] = []
-        let visibleId = front ? fresh.first(where: { $0.inFrontWindow && $0.selected })?.id : nil
-        if visibleId != visibleTab { visibleTab = visibleId; visibleSince = now }
         jumpedAt = jumpedAt.filter { now.timeIntervalSince($0.value) < Self.jumpGrace }
 
         for t in fresh {
@@ -81,7 +166,10 @@ final class TabModel: ObservableObject {
             // A finish: observed busy → idle, or (first sight after a restart) idle with a persisted busy start.
             let finished = t.state == .idle && (prev == .busy || (prev == nil && busySince[t.id] != nil))
             if t.state == .busy {
-                if prev == nil {
+                if let since = t.since {
+                    newBusy[t.id] = since       // the source knows the real start
+                    if prev != .busy { newUnread[t.id] = nil }
+                } else if prev == nil {
                     // Keep the persisted start after a restart; otherwise the start is unknown.
                     if newBusy[t.id] == nil { newBusy[t.id] = Self.unknownStart }
                     newUnread[t.id] = nil       // working: nothing waits right now
@@ -93,15 +181,19 @@ final class TabModel: ObservableObject {
                 newBusy[t.id] = nil
             }
 
+            // External items carry their own finish time; Ghostty edges happen "now".
+            let markTime = t.since ?? now
             if finished && !suppress {
-                newUnread[t.id] = UnreadMark(since: now, bell: t.bell)
+                newUnread[t.id] = UnreadMark(since: markTime, bell: t.bell)
                 added.append(t)
             }
             // Bell edge only when the tab was seen before without a bell (no marks from stale 🔔 at start).
-            if t.bell && lastBell[t.id] == false && !suppress {
+            // An external item that is "waiting" on first sight needs you now, so it counts.
+            let bellEdge = lastBell[t.id] == false || (t.isExternal && prev == nil)
+            if t.bell && bellEdge && !suppress {
                 if newUnread[t.id] == nil {
-                    newUnread[t.id] = UnreadMark(since: now, bell: true)
-                    added.append(t)
+                    newUnread[t.id] = UnreadMark(since: markTime, bell: true)
+                    if !added.contains(where: { $0.id == t.id }) { added.append(t) }
                 } else {
                     newUnread[t.id]?.bell = true  // finished earlier, now explicitly waits for input
                 }
@@ -117,21 +209,31 @@ final class TabModel: ObservableObject {
             log("unread (\(newUnread[t.id]?.bell == true ? "bell" : "done")): \(t.title)")
         }
 
-        newUnread = newUnread.filter { ids.contains($0.key) }
-        newBusy = newBusy.filter { ids.contains($0.key) }
-        lastState = lastState.filter { ids.contains($0.key) }
-        lastBell = lastBell.filter { ids.contains($0.key) }
+        func keep(_ id: String) -> Bool { ids.contains(id) || !owns(id) }
+        newUnread = newUnread.filter { keep($0.key) }
+        newBusy = newBusy.filter { keep($0.key) }
+        lastState = lastState.filter { keep($0.key) }
+        lastBell = lastBell.filter { keep($0.key) }
 
         let marksChanged = newUnread != unread || newBusy != busySince
-        let changed = fresh != tabs || marksChanged || isRunning != running
-        if changed {
-            tabs = fresh
+        if marksChanged {
             unread = newUnread
             busySince = newBusy
-            running = isRunning
+            persist()
         }
-        if marksChanged { persist() }
-        return (changed, added.filter { newUnread[$0.id] != nil })
+        return (marksChanged, added.filter { newUnread[$0.id] != nil })
+    }
+
+    private func persistExternalLast() {
+        var out: [String: String] = [:]
+        for (id, st) in lastState where isExternalID(id) {
+            out[id] = switch st {
+            case .busy: "busy"
+            case .plain: "plain"
+            case .idle: lastBell[id] == true ? "waiting" : "idle"
+            }
+        }
+        if out != settings.externalLast { settings.externalLast = out }
     }
 
     /// Jump via GhosttyBar (click, ⌃⌥J, banner): read now, and ignore edges for this tab for a moment.
@@ -192,6 +294,9 @@ final class TabModel: ObservableObject {
         if t.state == .busy, let since = busySince[t.id], since != Self.unknownStart {
             return "for \(Self.duration(now.timeIntervalSince(since)))"
         }
+        if t.isExternal && t.bell {   // read, but the source still says it waits for you
+            return t.since.map { "waiting \(Self.duration(now.timeIntervalSince($0)))" } ?? "waiting"
+        }
         return nil
     }
 
@@ -207,13 +312,16 @@ final class TabModel: ObservableObject {
     var busyCount: Int { tabs.filter { $0.state == .busy }.count }
     var unreadCount: Int { unread.count }
 
+    /// Something to list: tabs, external items, or at least an offline source to report.
+    var hasContent: Bool { !tabs.isEmpty || external.contains { $0.error != nil } }
+
     /// Tabs shown in the list (all, or only unread when the filter is on).
     var visibleTabs: [Tab] { unreadOnly ? tabs.filter { unread[$0.id] != nil } : tabs }
 
     /// Filter on, tabs exist, nothing unread.
-    var allReadEmptyState: Bool { unreadOnly && !tabs.isEmpty && visibleTabs.isEmpty }
+    var allReadEmptyState: Bool { unreadOnly && hasContent && visibleTabs.isEmpty }
 
-    /// Oldest unread first (FIFO), ties in tab order.
+    /// Oldest unread first (FIFO), ties in list order.
     var nextUnread: Tab? {
         tabs.enumerated()
             .filter { unread[$0.element.id] != nil }
@@ -223,14 +331,16 @@ final class TabModel: ObservableObject {
             }?.element
     }
 
+    private var emptyText: String { running ? "No tabs" : "Ghostty not running" }
+
     var summary: String {
-        if tabs.isEmpty { return running ? "No tabs" : "Ghostty not running" }
+        if tabs.isEmpty { return emptyText }
         return "\(tabs.count) tabs · \(busyCount) working · \(unreadCount) unread"
     }
 
     /// Header line in the window: the unread count lives in the filter pill next to it.
     var windowSummary: String {
-        if tabs.isEmpty { return running ? "No tabs" : "Ghostty not running" }
+        if tabs.isEmpty { return emptyText }
         return "\(tabs.count) tabs · \(busyCount) working"
     }
 
@@ -240,10 +350,33 @@ final class TabModel: ObservableObject {
         return busyCount > 0 ? "\(tabs.count) tabs · \(busyCount) ◐" : "\(tabs.count) tabs"
     }
 
-    /// Window ids in first-seen order (all windows, so "Window N" numbering stays stable when filtering).
+    /// Ghostty window ids in first-seen order (all windows, so "Window N" numbering stays stable when filtering).
     var windowIDs: [String] {
         var out: [String] = []
-        for t in tabs where !out.contains(t.windowID) { out.append(t.windowID) }
+        for t in ghosttyTabs where !out.contains(t.windowID) { out.append(t.windowID) }
+        return out
+    }
+
+    /// What the menu and the window list: Ghostty windows ("Window N", no header when it is the only
+    /// group), then one group per external source (header = source name, plus "offline" when it failed).
+    /// Groups without visible rows are left out, except an offline source in the "All" view.
+    var groups: [TabGroup] {
+        let shown = visibleTabs
+        let shownIDs = Set(shown.map(\.id))
+        let wins = windowIDs
+        var out: [TabGroup] = wins.enumerated().compactMap { wi, wid in
+            let ts = shown.filter { $0.windowID == wid }
+            return ts.isEmpty ? nil : TabGroup(id: wid, title: "Window \(wi + 1)", note: nil, tabs: ts, dim: false)
+        }
+        for g in external {
+            let ts = g.items.filter { shownIDs.contains($0.id) }
+            if ts.isEmpty && (unreadOnly || g.error == nil) { continue }
+            out.append(TabGroup(id: externalGroupID(g.name), title: g.name, note: g.error, tabs: ts,
+                                dim: g.error != nil))
+        }
+        if out.count == 1, let g = out.first, !isExternalID(g.id) {
+            out[0] = TabGroup(id: g.id, title: nil, note: nil, tabs: g.tabs, dim: false)
+        }
         return out
     }
 }
@@ -322,7 +455,8 @@ final class AppSettings {
         get { d.object(forKey: "hotKey") as? Bool ?? true }
         set { d.set(newValue, forKey: "hotKey") }
     }
-    /// Unread marks by Ghostty tab id (pruned to existing tabs on every successful poll).
+    /// Unread marks by tab id (Ghostty ids, and namespaced ids of external items; pruned to existing ones
+    /// on every successful poll).
     var unread: [String: UnreadMark] {
         get { d.data(forKey: "unread").flatMap { try? JSONDecoder().decode([String: UnreadMark].self, from: $0) } ?? [:] }
         set { d.set(try? JSONEncoder().encode(newValue), forKey: "unread") }
@@ -330,6 +464,11 @@ final class AppSettings {
     var busySince: [String: Date] {
         get { (d.dictionary(forKey: "busySince") as? [String: Double])?.mapValues { Date(timeIntervalSince1970: $0) } ?? [:] }
         set { d.set(newValue.mapValues(\.timeIntervalSince1970), forKey: "busySince") }
+    }
+    /// Last seen state of external items ("busy", "idle", "waiting", "plain") by namespaced id.
+    var externalLast: [String: String] {
+        get { d.dictionary(forKey: "externalLast") as? [String: String] ?? [:] }
+        set { d.set(newValue, forKey: "externalLast") }
     }
 
     static func clamp(_ v: Double) -> Double { min(1.0, max(opacityMin, (v * 100).rounded() / 100)) }

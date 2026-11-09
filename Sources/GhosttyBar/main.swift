@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let settings: AppSettings
     let model: TabModel
     let source: TabSource
+    let externals: ExternalSources
     var notifier: Notifier?             // nil in demo mode
     var hotKey: HotKey?
     var statusItem: NSStatusItem!
@@ -64,6 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             source = GhosttyClient()
         }
         model = TabModel(settings: settings)
+        externals = ExternalSources(demo: isDemo)
         super.init()
     }
 
@@ -111,13 +113,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             quitSources.append(m)
         }
 
+        externals.onConfig = { [weak self] names in
+            guard let self else { return }
+            let before = Set(self.model.unread.keys)
+            self.model.setExternalSources(names)
+            self.afterApply((true, []), unreadBefore: before)
+        }
+        externals.onResult = { [weak self] name, result in
+            guard let self else { return }
+            let before = Set(self.model.unread.keys)
+            let r = self.model.applyExternal(name, items: result.items, error: result.error)
+            self.afterApply(r, unreadBefore: before)
+        }
+
         poll()
+        externals.tick()
         rebuildMenu()
         // Adaptive: every 0.7 s while Ghostty is frontmost (fast read detection), else every 2 s.
         let t = Timer(timeInterval: 0.7, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 if self.source.isFrontmost || Date().timeIntervalSince(self.lastPoll) >= 2.0 { self.poll() }
+                self.externals.tick()   // runs each external source on its own interval
             }
         }
         RunLoop.main.add(t, forMode: .common)  // keep polling while a menu is open
@@ -147,16 +164,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let before = Set(self.model.unread.keys)
             let r = self.model.apply(fresh, running: self.source.isRunning,
                                      front: frontBefore && self.source.isFrontmost)
-            if r.changed {
-                self.rebuildMenu()
-                self.window.fitHeight()
-            }
-            if let notifier = self.notifier, self.settings.notify {
-                for t in r.newlyUnread { notifier.post(t, bell: self.model.unread[t.id]?.bell == true) }
-            }
-            for id in before.subtracting(self.model.unread.keys) { self.notifier?.clear(id) }
-            self.updateTitle()
+            self.afterApply(r, unreadBefore: before)
         }
+    }
+
+    /// After a Ghostty poll or an external source result: redraw, notify, clear stale banners.
+    private func afterApply(_ r: (changed: Bool, newlyUnread: [Tab]), unreadBefore: Set<String>) {
+        if r.changed {
+            rebuildMenu()
+            window.fitHeight()
+        }
+        if let notifier, settings.notify {
+            for t in r.newlyUnread { notifier.post(t, bell: model.unread[t.id]?.bell == true) }
+        }
+        for id in unreadBefore.subtracting(model.unread.keys) { notifier?.clear(id) }
+        updateTitle()
     }
 
     func updateTitle() {
@@ -189,7 +211,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.removeAllItems()
         menu.addItem(disabledItem(model.summary))
 
-        if !model.tabs.isEmpty {
+        if model.hasContent {
             // Demo mode never registers the hotkey but shows the menu as a real instance would.
             let hotKeyActive = hotKey != nil || (isDemo && settings.hotKey)
             let next = ClosureItem("Next unread tab", key: hotKeyActive ? "j" : "") { [weak self] in self?.nextUnread() }
@@ -202,17 +224,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(.separator())
 
             if model.allReadEmptyState { menu.addItem(disabledItem("All read ✓")) }
-            let groups = TabListView.windowGroups(model)
+            let groups = model.groups
             let now = Date()
             for (gi, g) in groups.enumerated() {
-                if groups.count > 1 {
-                    if gi > 0 { menu.addItem(.separator()) }
-                    menu.addItem(disabledItem("Window \(g.number)"))
+                if gi > 0 { menu.addItem(.separator()) }
+                if let title = g.title {
+                    menu.addItem(disabledItem(g.note.map { "\(title) · \($0)" } ?? title))
                 }
                 for t in g.tabs {
                     let item = ClosureItem(t.title) { [weak self] in self?.focus(t) }
-                    item.attributedTitle = rowTitle(t, now: now)
-                    if !t.directory.isEmpty { item.toolTip = t.directory }
+                    item.attributedTitle = rowTitle(t, now: now, dim: g.dim)
+                    let tip = t.isExternal ? (t.url ?? t.directory) : t.directory
+                    if !tip.isEmpty { item.toolTip = tip }
                     menu.addItem(item)
                 }
             }
@@ -229,11 +252,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// "● fix flaky test   done 2 min ago   ‹": glyph colored by status, unread bold, detail dimmed.
-    private func rowTitle(_ t: Tab, now: Date) -> NSAttributedString {
+    private func rowTitle(_ t: Tab, now: Date, dim: Bool = false) -> NSAttributedString {
         let st = model.status(t)
         let base = NSFont.menuFont(ofSize: 0)
         let size = base.pointSize
         let glyphColor: NSColor = switch st {
+        case _ where dim: .tertiaryLabelColor
         case .unread: .systemOrange
         case .busy: .systemBlue
         case .read, .plain: .tertiaryLabelColor
@@ -242,8 +266,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                           attributes: [.font: base, .foregroundColor: glyphColor])
         s.append(NSAttributedString(string: t.title, attributes: [
             .font: st == .unread ? NSFont.boldSystemFont(ofSize: size) : base,
-            .foregroundColor: (st == .read || st == .plain) ? NSColor.secondaryLabelColor : NSColor.labelColor,
+            .foregroundColor: (dim || st == .read || st == .plain) ? NSColor.secondaryLabelColor : NSColor.labelColor,
         ]))
+        if t.isExternal && !t.directory.isEmpty {
+            s.append(NSAttributedString(string: "  " + t.directory, attributes: [
+                .font: NSFont.systemFont(ofSize: size - 2), .foregroundColor: NSColor.tertiaryLabelColor,
+            ]))
+        }
         if let d = model.detail(t, now: now) {
             s.append(NSAttributedString(string: "   " + d, attributes: [
                 .font: NSFont.systemFont(ofSize: size - 2),
@@ -343,13 +372,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: actions
 
+    /// Click, hotkey or banner. Ghostty tab: bring it to the front. External item: open its url, if any.
     func focus(_ t: Tab) {
-        source.focus(t)
+        if t.isExternal {
+            if let u = t.url, let url = URL(string: u) { NSWorkspace.shared.open(url) }
+        } else {
+            source.focus(t)
+        }
         if model.unread[t.id] != nil { log("read (jumped to): \(t.title)") }
         model.jumped(t.id)
         notifier?.clear(t.id)
         afterReadChange()
-        if isDemo { poll() }  // show the new selection right away
+        if isDemo && !t.isExternal { poll() }  // show the new selection right away
     }
 
     func nextUnread() {

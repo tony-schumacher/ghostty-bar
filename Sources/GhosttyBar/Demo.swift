@@ -1,4 +1,5 @@
-// `--demo`: fixture tabs instead of Ghostty, for screenshots and for trying GhosttyBar without Ghostty.
+// `--demo`: fixture tabs instead of Ghostty (plus a fixture external source, see External.swift), for
+// screenshots and for trying GhosttyBar without Ghostty.
 // No AppleScript, no global hotkey, no notifications; settings live in a separate defaults suite
 // that is reset on every launch, so a demo can run next to a normal instance.
 import Foundation
