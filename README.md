@@ -45,6 +45,9 @@ Use it from the menu bar, from a small floating window, or with a global hotkey.
 ### Build from source (recommended)
 
 You need Swift 6, which comes with Xcode 16 or later or the Xcode command line tools (`xcode-select --install`).
+With the command line tools 27, swiftc cannot compile SwiftUI's `@State` against the macOS 27 SDK,
+because the tools do not ship the SwiftUI macro plugin. `build.sh` then builds with the newest installed
+SDK where `@State` compiles, for example `MacOSX26.5.sdk`.
 
 ```sh
 git clone https://github.com/tony-schumacher/ghostty-bar.git
