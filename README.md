@@ -25,10 +25,12 @@ Use it from the menu bar, from a small floating window, or with a global hotkey.
 - Click a tab (in the menu or the window) to jump to it.
 - Global hotkey ⌃⌥J jumps to the oldest unread tab, from any app.
 - Optional macOS notification when a tab finishes. Off by default.
+- **Agent activity**: a dim second line under a Claude Code tab shows background subagents and dynamic
+  workflows running in that session, e.g. `⚙ review-pr · Verify · 3 running` or `⚙ 2 agents`.
 - **External sources**: list agent sessions from tmux, other machines or bots next to your Ghostty tabs,
   through any command that prints a small JSON list.
 - Demo mode with sample tabs, so you can try it without Ghostty.
-- Native Swift, about 2,200 lines, no dependencies. GhosttyBar itself makes no network connections.
+- Native Swift, about 2,600 lines, no dependencies. GhosttyBar itself makes no network connections.
 
 | Unread filter | Menu bar dropdown |
 | --- | --- |
@@ -100,6 +102,22 @@ Click `≡` in the menu bar. The dropdown lists every tab; click one to jump to 
 | ‹ | The selected tab of its Ghostty window | |
 
 `waiting` means the tab rang the bell, which Claude Code does when it needs your input or a permission.
+
+### Agent activity
+
+When a Claude Code session runs work in the background, its row gets a second, dimmer line:
+
+| Line | Meaning |
+| --- | --- |
+| `⚙ review-pr · Verify · 3 running` | a dynamic workflow: its name, current phase and running agents |
+| `⚙ 2 agents` | background subagents (Agent tool); with one, its description |
+| `… · +1 workflow`, `… · +2 agents` | more runs in the same session |
+
+GhosttyBar reads this from Claude Code's local session files, read-only: the pid of each tab's foreground
+process leads to `~/.claude/sessions/<pid>.json` (or `$CLAUDE_CONFIG_DIR`) and from there to the session's
+`subagents/` and `workflows/` files. A subagent counts while its transcript changed in the last 90 seconds,
+a workflow until it writes its final status (or nothing in it changed for 15 minutes). Without these files
+there is simply no second line. `GhosttyBar --dump-agents` prints what it sees for every tab as JSON.
 
 ### When a tab counts as read
 
@@ -293,6 +311,8 @@ A tab that goes from working to idle becomes unread unless you are looking at it
   "(off in System Settings)" or the setting stays off.
 - Because each build has a new ad-hoc signature, macOS may ask again for permission to control Ghostty
   after you rebuild.
+- Agent activity depends on Claude Code's internal file layout, which can change between versions. If it
+  does, the line just disappears; nothing else breaks.
 - Tab status comes from the title. If you or a shell prompt overwrite the title, GhosttyBar shows a plain tab.
 
 ## Troubleshooting

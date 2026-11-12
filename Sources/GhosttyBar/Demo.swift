@@ -27,11 +27,17 @@ final class DemoSource: TabSource {
             ("w2", "✳ investigate memory leak", "~/code/worker", false),
         ]
         var index: [String: Int] = [:]
+        // Background work in two sessions (see Agents.swift).
+        let agents: [String: AgentActivity] = [
+            "refactor auth middleware": AgentActivity(workflows: [WorkflowRun(name: "review-pr", phase: "Verify", running: 3)]),
+            "docs: README": AgentActivity(agents: 2),
+        ]
         tabs = rows.enumerated().map { i, r in
             let (title, state, bell) = parseTitle(r.1)
             index[r.0, default: 0] += 1
             return Tab(windowID: r.0, id: "demo-\(i + 1)", index: index[r.0]!, selected: r.3,
-                       inFrontWindow: r.0 == "w1", title: title, state: state, bell: bell, directory: r.2)
+                       inFrontWindow: r.0 == "w1", title: title, state: state, bell: bell, directory: r.2,
+                       agents: agents[title])
         }
     }
 

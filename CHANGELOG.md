@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+
+- Agent activity: a dim second line under a Claude Code tab shows background subagents and dynamic
+  workflows running in that session (`⚙ review-pr · Verify · 3 running`, `⚙ 2 agents`), in the window
+  and in the menu. Read-only from Claude Code's local session files (`~/.claude` or `$CLAUDE_CONFIG_DIR`),
+  found through the pid of each tab's foreground process; nothing shows when the files are missing.
+- `--dump-agents` prints every tab with its Claude Code session and agent activity as JSON.
+- Demo mode shows a sample workflow and two background agents.
+
 ## 0.2.0
 
 - External sources: list agent sessions from tmux, other machines or bots next to the Ghostty tabs.

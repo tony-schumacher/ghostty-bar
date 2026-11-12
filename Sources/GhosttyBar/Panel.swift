@@ -8,6 +8,7 @@ enum Layout {
     static let width: CGFloat = 300
     static let topH: CGFloat = 30      // transparent titlebar row: close button + summary + filter pill
     static let rowH: CGFloat = 22
+    static let agentsH: CGFloat = 14   // extra dim line under a tab with background agents / workflows
     static let headerH: CGFloat = 20
     static let headerGap: CGFloat = 4  // extra space above the 2nd+ window header
     static let pad: CGFloat = 8
@@ -20,6 +21,7 @@ enum Layout {
         var h: CGFloat = 0
         for (i, g) in m.groups.enumerated() {
             h += CGFloat(g.tabs.count) * rowH
+            h += CGFloat(g.tabs.filter { $0.agents?.isEmpty == false }.count) * agentsH
             if g.title != nil { h += headerH + (i > 0 ? headerGap : 0) }
         }
         return h + pad
@@ -41,6 +43,34 @@ struct TabRow: View {
     private var unread: Bool { status == .unread }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            titleLine.frame(height: Layout.rowH)
+            if let a = tab.agents, !a.isEmpty {
+                Text(a.text)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Color(red: 0.55, green: 0.75, blue: 1.0).opacity(0.75))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .padding(.leading, 28)
+                    .frame(height: Layout.agentsH, alignment: .top)
+            }
+        }
+        .padding(.leading, 6)
+        .padding(.trailing, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 5)
+                .fill(hover ? Color.white.opacity(0.13) : (unread ? Color.orange.opacity(0.14) : .clear))
+        )
+        .opacity(dim ? 0.5 : 1)
+        .shadow(color: .black.opacity(lowOpacity ? 0.9 : 0), radius: 2, y: 1)
+        .contentShape(Rectangle())
+        .onHover { hover = $0 }
+        .onTapGesture(perform: onClick)
+        .help(tab.isExternal ? (tab.url ?? tab.directory) : tab.directory)
+    }
+
+    private var titleLine: some View {
         HStack(spacing: 6) {
             Text(glyph)
                 .font(.system(size: unread ? 13 : 12, weight: unread ? .bold : .regular))
@@ -71,19 +101,6 @@ struct TabRow: View {
                 Text("‹").font(.system(size: 13)).foregroundStyle(.white.opacity(0.55))
             }
         }
-        .padding(.leading, 6)
-        .padding(.trailing, 8)
-        .frame(height: Layout.rowH)
-        .background(
-            RoundedRectangle(cornerRadius: 5)
-                .fill(hover ? Color.white.opacity(0.13) : (unread ? Color.orange.opacity(0.14) : .clear))
-        )
-        .opacity(dim ? 0.5 : 1)
-        .shadow(color: .black.opacity(lowOpacity ? 0.9 : 0), radius: 2, y: 1)
-        .contentShape(Rectangle())
-        .onHover { hover = $0 }
-        .onTapGesture(perform: onClick)
-        .help(tab.isExternal ? (tab.url ?? tab.directory) : tab.directory)
     }
 
     private var glyphColor: Color {

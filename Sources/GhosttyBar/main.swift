@@ -282,6 +282,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if t.selected {
             s.append(NSAttributedString(string: "   ‹", attributes: [.font: base, .foregroundColor: NSColor.tertiaryLabelColor]))
         }
+        if let a = t.agents, !a.isEmpty {
+            // Second, smaller line under the title (indented past the glyph).
+            let line = a.text.count > 60 ? String(a.text.prefix(59)) + "…" : a.text
+            s.append(NSAttributedString(string: "\n      " + line, attributes: [
+                .font: NSFont.systemFont(ofSize: size - 2), .foregroundColor: NSColor.secondaryLabelColor,
+            ]))
+        }
         return s
     }
 
@@ -463,6 +470,7 @@ nonisolated func onSignalEvenInMenu(_ sig: Int32, _ action: @escaping @MainActor
     return src
 }
 
+if CommandLine.arguments.contains("--dump-agents") { exit(dumpAgents()) }
 setUpLogging()
 let app = NSApplication.shared
 let delegate = MainActor.assumeIsolated { AppDelegate() }

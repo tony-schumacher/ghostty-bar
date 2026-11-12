@@ -20,12 +20,17 @@ struct Tab: Equatable {
     var source: String? = nil
     var url: String? = nil
     var since: Date? = nil
+    /// Ghostty tabs only: pid of the tab's foreground process, and what runs in the background of the
+    /// Claude Code session in it (subagents, workflows; see Agents.swift). Not part of the unread logic.
+    var pid: Int32? = nil
+    var agents: AgentActivity? = nil
 
     var isExternal: Bool { source != nil }
 
     func with(selected: Bool, inFrontWindow: Bool) -> Tab {
         Tab(windowID: windowID, id: id, index: index, selected: selected, inFrontWindow: inFrontWindow,
-            title: title, state: state, bell: bell, directory: directory, source: source, url: url, since: since)
+            title: title, state: state, bell: bell, directory: directory, source: source, url: url, since: since,
+            pid: pid, agents: agents)
     }
 }
 
@@ -78,11 +83,27 @@ with timeout of 3 seconds
                     set end of dirs to d
                 end repeat
             end if
+            set pids to {}
+            try
+                set pids to pid of focused terminal of tabs of w
+            end try
+            if (count of pids) is not n then
+                set pids to {}
+                repeat with t in tabs of w
+                    set p to 0
+                    try
+                        set p to pid of focused terminal of t
+                    end try
+                    set end of pids to p
+                end repeat
+            end if
             set isFront to (wid is frontId)
             repeat with i from 1 to n
                 set d to item i of dirs
                 if d is missing value then set d to ""
-                set out to out & wid & fs & (item i of tids) & fs & (item i of tidx) & fs & (item i of tsel) & fs & (item i of tnames) & fs & d & fs & isFront & rs
+                set p to item i of pids
+                if p is missing value then set p to 0
+                set out to out & wid & fs & (item i of tids) & fs & (item i of tidx) & fs & (item i of tsel) & fs & (item i of tnames) & fs & d & fs & isFront & fs & p & rs
             end repeat
         end repeat
         return out
@@ -126,17 +147,41 @@ private func asQuoted(_ s: String) -> String {
     s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
 }
 
-private func parseTabs(_ out: String) -> [Tab] {
+func parseTabs(_ out: String) -> [Tab] {
     var tabs: [Tab] = []
     for row in out.components(separatedBy: rowSep) where !row.isEmpty {
         let f = row.components(separatedBy: fieldSep)
-        guard f.count == 7 else { continue }
+        guard f.count == 8 else { continue }
         let (title, state, bell) = parseTitle(f[4])
+        let pid = Int32(f[7]).flatMap { $0 > 0 ? $0 : nil }
         tabs.append(Tab(windowID: f[0], id: f[1], index: Int(f[2]) ?? 0,
                         selected: f[3] == "true", inFrontWindow: f[6] == "true",
-                        title: title, state: state, bell: bell, directory: shortDir(f[5])))
+                        title: title, state: state, bell: bell, directory: shortDir(f[5]), pid: pid))
     }
     return tabs
+}
+
+/// Fills in `agents` from the pids (file reads, call off the main thread).
+func attachAgents(_ tabs: [Tab], reader: AgentReader) -> [Tab] {
+    let act = reader.activity(for: tabs.compactMap(\.pid))
+    guard !act.isEmpty else { return tabs }
+    return tabs.map { t in
+        var t = t
+        t.agents = t.pid.flatMap { act[$0] }
+        return t
+    }
+}
+
+/// One synchronous tab read for `--dump-agents` (before the app runs; blocks the caller).
+/// nil when Ghostty is not running or the script failed (the error goes to stderr).
+func fetchTabsOnce() -> [Tab]? {
+    guard NSWorkspace.shared.runningApplications.contains(where: { $0.bundleIdentifier == ghosttyBundleID }) else {
+        return nil
+    }
+    var error: NSDictionary?
+    let result = NSAppleScript(source: listScript)?.executeAndReturnError(&error)
+    if let error { log("AppleScript error: \(error)"); return nil }
+    return parseTabs(result?.stringValue ?? "")
 }
 
 /// The real Ghostty. The main thread never blocks on it: all AppleScript runs in `ScriptRunner`.
@@ -159,9 +204,9 @@ final class GhosttyClient: TabSource {
         guard isRunning else { done([]); return }
         guard !inFlight else { return }
         inFlight = true
-        runner.list { [weak self] out in
+        runner.list { [weak self] tabs in
             self?.inFlight = false
-            done(out.map(parseTabs))
+            done(tabs)
         }
     }
 
@@ -186,13 +231,16 @@ private final class ScriptRunner: @unchecked Sendable {
     // queue-confined state
     private var compiledList: NSAppleScript?
     private var lastErrorLogged: String?
+    private let agents = AgentReader()
 
-    func list(_ done: @escaping @MainActor @Sendable (String?) -> Void) {
+    /// Tab list with agent activity, both read here on the background queue.
+    func list(_ done: @escaping @MainActor @Sendable ([Tab]?) -> Void) {
         queue.async { [self] in
-            let out = runList()
-            DispatchQueue.main.async { MainActor.assumeIsolated { done(out) } }
+            let tabs = runList().map { attachAgents(parseTabs($0), reader: agents) }
+            DispatchQueue.main.async { MainActor.assumeIsolated { done(tabs) } }
         }
     }
+
 
     func run(_ source: String) {
         queue.async { [self] in
