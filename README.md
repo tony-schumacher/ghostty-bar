@@ -295,6 +295,9 @@ a tab rings the bell. GhosttyBar reads the titles of all tabs through Ghostty's 
 
 A tab that goes from working to idle becomes unread unless you are looking at it.
 
+If a tab's title has no glyph (you renamed the tab), GhosttyBar falls back to the `busy`/`idle` status in
+the Claude Code session file of the tab's process (`~/.claude/sessions/<pid>.json`).
+
 - GhosttyBar polls every 0.7 seconds while Ghostty is the active app (to notice quickly that you looked at
   a tab) and every 2 seconds otherwise. The AppleScript calls run on a background queue.
 - It only polls while Ghostty is running, so it never launches Ghostty.

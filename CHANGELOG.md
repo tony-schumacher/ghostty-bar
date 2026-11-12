@@ -6,6 +6,8 @@
   workflows running in that session (`⚙ review-pr · Verify · 3 running`, `⚙ 2 agents`), in the window
   and in the menu. Read-only from Claude Code's local session files (`~/.claude` or `$CLAUDE_CONFIG_DIR`),
   found through the pid of each tab's foreground process; nothing shows when the files are missing.
+- A renamed Claude Code tab (title without a status glyph) takes working/idle from its session file, so
+  it gets the normal status and unread tracking. A title glyph still wins.
 - `--dump-agents` prints every tab with its Claude Code session and agent activity as JSON.
 - Demo mode shows a sample workflow and two background agents.
 

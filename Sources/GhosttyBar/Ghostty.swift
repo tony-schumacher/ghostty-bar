@@ -161,14 +161,20 @@ func parseTabs(_ out: String) -> [Tab] {
     return tabs
 }
 
-/// Fills in `agents` from the pids (file reads, call off the main thread).
+/// Fills in `agents` from the pids (file reads, call off the main thread). A tab whose title carries no
+/// Claude Code glyph (renamed tab) takes busy/idle from its session file; a title glyph always wins.
 func attachAgents(_ tabs: [Tab], reader: AgentReader) -> [Tab] {
-    let act = reader.activity(for: tabs.compactMap(\.pid))
-    guard !act.isEmpty else { return tabs }
+    let info = reader.info(for: tabs.compactMap(\.pid))
+    guard !info.isEmpty else { return tabs }
     return tabs.map { t in
-        var t = t
-        t.agents = t.pid.flatMap { act[$0] }
-        return t
+        guard let i = t.pid.flatMap({ info[$0] }) else { return t }
+        var state = t.state
+        if state == .plain, let busy = i.busy { state = busy ? .busy : .idle }
+        var out = Tab(windowID: t.windowID, id: t.id, index: t.index, selected: t.selected,
+                      inFrontWindow: t.inFrontWindow, title: t.title, state: state, bell: t.bell,
+                      directory: t.directory, pid: t.pid)
+        out.agents = i.activity
+        return out
     }
 }
 

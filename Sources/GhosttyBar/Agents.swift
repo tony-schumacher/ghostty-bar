@@ -67,11 +67,18 @@ final class AgentReader {
     static let maxRunDirs = 5
     static let maxJournalBytes = 8_000_000
 
-    struct Session { let id: String; let cwd: String; let dir: URL? }
+    struct Session { let id: String; let cwd: String; let dir: URL?; let status: String? }
+
+    /// Per pid: the session's own busy/idle status (used when the title has no Claude Code glyph)
+    /// and its background activity.
+    struct Info: Equatable, Sendable {
+        var busy: Bool?                 // nil: status unknown
+        var activity: AgentActivity?
+    }
 
     let configDir: URL
     private let fm = FileManager.default
-    private var cache: [Int32: (at: Date, activity: AgentActivity?)] = [:]
+    private var cache: [Int32: (at: Date, info: Info?)] = [:]
     private var sessionDirs: [String: (dir: URL?, checked: Date)] = [:]
     private var journals: [String: (mtime: TimeInterval, size: Int64, parsed: (Int, String?))] = [:]
     private var names: [String: String] = [:]
@@ -84,23 +91,30 @@ final class AgentReader {
         }
     }
 
-    /// Activity for each pid that has some; pids without a Claude Code session or without activity are left out.
-    func activity(for pids: [Int32], now: Date = Date()) -> [Int32: AgentActivity] {
+    /// Info for each pid that runs a Claude Code session; other pids are left out.
+    func info(for pids: [Int32], now: Date = Date()) -> [Int32: Info] {
         let wanted = Set(pids)
         cache = cache.filter { wanted.contains($0.key) }
         guard isDir(configDir.path) else { return [:] }
-        var out: [Int32: AgentActivity] = [:]
+        var out: [Int32: Info] = [:]
         for pid in wanted where pid > 0 {
-            let a: AgentActivity?
+            let i: Info?
             if let c = cache[pid], now.timeIntervalSince(c.at) < Self.minInterval {
-                a = c.activity
+                i = c.info
             } else {
-                a = session(pid: pid, now: now).flatMap { read($0, now: now) }
-                cache[pid] = (now, a)
+                i = session(pid: pid, now: now).map { s in
+                    Info(busy: s.status == "busy" ? true : s.status == "idle" ? false : nil, activity: read(s, now: now))
+                }
+                cache[pid] = (now, i)
             }
-            if let a { out[pid] = a }
+            if let i { out[pid] = i }
         }
         return out
+    }
+
+    /// Activity for each pid that has some.
+    func activity(for pids: [Int32], now: Date = Date()) -> [Int32: AgentActivity] {
+        info(for: pids, now: now).compactMapValues(\.activity)
     }
 
     /// The Claude Code session of a process, nil when the pid is not a running `claude`.
@@ -111,7 +125,7 @@ final class AgentReader {
               let id = o["sessionId"] as? String, isSafeName(id) else { return nil }
         if let p = (o["pid"] as? NSNumber)?.int32Value, p != pid { return nil }
         let cwd = o["cwd"] as? String ?? ""
-        return Session(id: id, cwd: cwd, dir: sessionDir(id: id, cwd: cwd, now: now))
+        return Session(id: id, cwd: cwd, dir: sessionDir(id: id, cwd: cwd, now: now), status: o["status"] as? String)
     }
 
     private func read(_ s: Session, now: Date) -> AgentActivity? {
@@ -268,21 +282,24 @@ final class AgentReader {
 /// to stdout. Exit status 1 when Ghostty is not running or cannot be queried.
 func dumpAgents() -> Int32 {
     let reader = AgentReader()
-    guard let tabs = fetchTabsOnce() else {
+    guard let raw = fetchTabsOnce() else {
         FileHandle.standardError.write("Ghostty is not running, or GhosttyBar may not control it (Automation permission)\n"
             .data(using: .utf8)!)
         return 1
     }
+    let tabs = attachAgents(raw, reader: reader)
     let act = reader.activity(for: tabs.compactMap(\.pid))
     var windows: [String] = []
     let rows: [[String: Any]] = tabs.map { t in
         if !windows.contains(t.windowID) { windows.append(t.windowID) }
+        let state = switch t.state { case .busy: "busy"; case .idle: "idle"; case .plain: "plain" }
         var o: [String: Any] = ["window": (windows.firstIndex(of: t.windowID) ?? 0) + 1, "tab": t.index,
-                                "title": t.title, "directory": t.directory]
+                                "title": t.title, "directory": t.directory, "state": state]
         if let pid = t.pid {
             o["pid"] = pid
             if let s = reader.session(pid: pid) {
                 o["sessionId"] = s.id
+                if let st = s.status { o["sessionStatus"] = st }
                 if let d = s.dir { o["sessionDir"] = d.path }
             }
             if let a = act[pid] { o["activity"] = a.json }
