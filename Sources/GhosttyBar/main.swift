@@ -279,7 +279,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 .foregroundColor: st == .unread ? NSColor.systemOrange : NSColor.tertiaryLabelColor,
             ]))
         }
-        if t.selected {
+        if t.focused {
             s.append(NSAttributedString(string: "   ‹", attributes: [.font: base, .foregroundColor: NSColor.tertiaryLabelColor]))
         }
         if let a = t.agents, !a.isEmpty {

@@ -11,6 +11,8 @@ struct Tab: Equatable {
     let index: Int
     let selected: Bool
     let inFrontWindow: Bool
+    /// The one tab you are actually in: selected in Ghostty's front window (every window has a selected tab).
+    var focused: Bool { selected && inFrontWindow }
     let title: String
     let state: TabState
     let bell: Bool         // title carried Ghostty's 🔔 (bell rang, e.g. Claude asks for permission/input)

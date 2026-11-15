@@ -77,7 +77,7 @@ struct TabRow: View {
                 .foregroundStyle(glyphColor)
                 .frame(width: 16)
             Text(tab.title)
-                .font(.system(size: 13, weight: unread || tab.selected ? .semibold : .regular))
+                .font(.system(size: 13, weight: unread || tab.focused ? .semibold : .regular))
                 .foregroundStyle(titleColor)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -97,7 +97,7 @@ struct TabRow: View {
                     .lineLimit(1)
                     .fixedSize()
             }
-            if tab.selected {
+            if tab.focused {
                 Text("‹").font(.system(size: 13)).foregroundStyle(.white.opacity(0.55))
             }
         }

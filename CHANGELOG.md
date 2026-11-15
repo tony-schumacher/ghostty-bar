@@ -11,6 +11,7 @@
 - `--dump-agents` prints every tab with its Claude Code session and agent activity as JSON.
 - Demo mode shows a sample workflow and two background agents.
 - Setting "Group by window" (default on): turn off to list all Ghostty tabs without "Window N" headers.
+- The `‹` marker and bold title now mark only the tab you are actually in (selected tab of Ghostty's front window), not the selected tab of every window.
 
 ## 0.2.0
 
