@@ -304,6 +304,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self else { return }
             self.window.setUnreadOnly(!self.model.unreadOnly)
         })
+        menu.addItem(ClosureItem("Group by window", checked: model.groupByWindow) { [weak self] in
+            guard let self else { return }
+            self.window.setGroupByWindow(!self.model.groupByWindow)
+        })
         menu.addItem(ClosureItem("Always on top", checked: settings.onTop) { [weak self] in
             guard let self else { return }
             self.window.setOnTop(!self.settings.onTop)

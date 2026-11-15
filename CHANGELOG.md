@@ -10,6 +10,7 @@
   it gets the normal status and unread tracking. A title glyph still wins.
 - `--dump-agents` prints every tab with its Claude Code session and agent activity as JSON.
 - Demo mode shows a sample workflow and two background agents.
+- Setting "Group by window" (default on): turn off to list all Ghostty tabs without "Window N" headers.
 
 ## 0.2.0
 

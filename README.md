@@ -144,6 +144,7 @@ behavior settings plus **Hide window**.
 | --- | --- |
 | Show / Hide window | Floating tab window. Drag it anywhere; drag its edge to change the width. The height follows the number of tabs. |
 | Show unread only | Same as the All / Unread filter in the window. |
+| Group by window | Headers "Window 1", "Window 2" for the Ghostty tabs. Turn off for one flat list. |
 | Always on top | Keeps the window above other windows and on all Spaces. On by default. |
 | Transparency | Opacity of the window background: 100 % is solid, 15 % is almost clear. Default 85 %. |
 | Blur | Blur of what shows through the window, from off to 100 %. Until you set it, it follows Transparency. |

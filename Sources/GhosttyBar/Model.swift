@@ -37,6 +37,7 @@ final class TabModel: ObservableObject {
     @Published private(set) var external: [ExternalGroup] = []
     @Published var opacity: Double = 1.0
     @Published var unreadOnly = false
+    @Published var groupByWindow = true
 
     private let settings: AppSettings
     private var ghosttyTabs: [Tab] = []
@@ -59,6 +60,7 @@ final class TabModel: ObservableObject {
         unread = settings.unread
         busySince = settings.busySince
         unreadOnly = settings.unreadOnly
+        groupByWindow = settings.groupByWindow
         // External items keep their last state across restarts, so a change while GhosttyBar was not
         // running still counts as an edge, and an item you already read stays read.
         for (id, v) in settings.externalLast {
@@ -259,6 +261,11 @@ final class TabModel: ObservableObject {
         settings.unreadOnly = on
     }
 
+    func setGroupByWindow(_ on: Bool) {
+        groupByWindow = on
+        settings.groupByWindow = on
+    }
+
     private func persist() {
         settings.unread = unread
         settings.busySince = busySince
@@ -365,15 +372,22 @@ final class TabModel: ObservableObject {
     }
 
     /// What the menu and the window list: Ghostty windows ("Window N", no header when it is the only
-    /// group), then one group per external source (header = source name, plus "offline" when it failed).
+    /// group, or all Ghostty tabs in one headerless block when "Group by window" is off), then one group
+    /// per external source (header = source name, plus "offline" when it failed).
     /// Groups without visible rows are left out, except an offline source in the "All" view.
     var groups: [TabGroup] {
         let shown = visibleTabs
         let shownIDs = Set(shown.map(\.id))
         let wins = windowIDs
-        var out: [TabGroup] = wins.enumerated().compactMap { wi, wid in
-            let ts = shown.filter { $0.windowID == wid }
-            return ts.isEmpty ? nil : TabGroup(id: wid, title: "Window \(wi + 1)", note: nil, tabs: ts, dim: false)
+        var out: [TabGroup]
+        if groupByWindow {
+            out = wins.enumerated().compactMap { wi, wid in
+                let ts = shown.filter { $0.windowID == wid }
+                return ts.isEmpty ? nil : TabGroup(id: wid, title: "Window \(wi + 1)", note: nil, tabs: ts, dim: false)
+            }
+        } else {
+            let ts = shown.filter { !$0.isExternal }
+            out = ts.isEmpty ? [] : [TabGroup(id: "ghostty", title: nil, note: nil, tabs: ts, dim: false)]
         }
         for g in external {
             let ts = g.items.filter { shownIDs.contains($0.id) }
@@ -451,6 +465,11 @@ final class AppSettings {
     var unreadOnly: Bool {
         get { d.bool(forKey: "unreadOnly") }
         set { d.set(newValue, forKey: "unreadOnly") }
+    }
+    /// "Window N" headers for the Ghostty tabs. Default on; off = one flat list.
+    var groupByWindow: Bool {
+        get { d.object(forKey: "groupByWindow") as? Bool ?? true }
+        set { d.set(newValue, forKey: "groupByWindow") }
     }
     /// Default off: no unsolicited banners.
     var notify: Bool {

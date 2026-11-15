@@ -404,6 +404,13 @@ final class TabWindowController: NSObject, NSWindowDelegate {
         onChange?()
     }
 
+    func setGroupByWindow(_ on: Bool) {
+        guard on != model.groupByWindow else { return }
+        model.setGroupByWindow(on)
+        fitHeight()
+        onChange?()
+    }
+
     func setOpacity(_ v: Double, rebuildMenu: Bool = true) {
         settings.opacity = v
         applyOpacity()
