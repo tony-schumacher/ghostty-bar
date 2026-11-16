@@ -13,6 +13,7 @@ final class DemoSource: TabSource {
     var isRunning: Bool { true }
     /// Never "frontmost": tabs are only marked read by clicking them (or "Mark all as read").
     var isFrontmost: Bool { false }
+    var instanceCount: Int { 1 }
 
     init() {
         // (window, raw title as Claude Code / Ghostty set it, directory, selected)

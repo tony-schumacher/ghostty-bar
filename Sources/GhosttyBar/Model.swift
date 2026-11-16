@@ -34,6 +34,8 @@ final class TabModel: ObservableObject {
     @Published private(set) var unread: [String: UnreadMark] = [:]
     @Published private(set) var busySince: [String: Date] = [:]
     @Published private(set) var running = false
+    /// Running Ghostty instances; > 1 means tabs of the other instances are missing (AppleScript sees one).
+    @Published private(set) var instances = 1
     @Published private(set) var external: [ExternalGroup] = []
     @Published var opacity: Double = 1.0
     @Published var unreadOnly = false
@@ -84,17 +86,19 @@ final class TabModel: ObservableObject {
     /// once (explicit intent) and suppresses new marks for that tab briefly (the in-flight snapshot may
     /// predate the jump).
     @discardableResult
-    func apply(_ fresh: [Tab]?, running isRunning: Bool, front: Bool,
+    func apply(_ fresh: [Tab]?, running isRunning: Bool, front: Bool, instances n: Int = 1,
                now: Date = Date()) -> (changed: Bool, newlyUnread: [Tab]) {
+        let instancesChanged = n != instances
+        instances = n
         guard let fresh else {
             visibleTab = nil  // gap in observation: dwell must be re-established
             if isRunning != running { running = isRunning; return (true, []) }
-            return (false, [])
+            return (instancesChanged, [])
         }
         let visibleId = front ? fresh.first(where: { $0.inFrontWindow && $0.selected })?.id : nil
         if visibleId != visibleTab { visibleTab = visibleId; visibleSince = now }
         let r = ingest(fresh, owns: { !isExternalID($0) }, front: front, now: now)
-        let changed = fresh != ghosttyTabs || r.marksChanged || isRunning != running
+        let changed = fresh != ghosttyTabs || r.marksChanged || isRunning != running || instancesChanged
         ghosttyTabs = fresh
         running = isRunning
         if changed { publishTabs() }
@@ -344,7 +348,8 @@ final class TabModel: ObservableObject {
     var countLabel: String {
         let remote = tabs.filter(\.isExternal).count
         let local = tabs.count - remote
-        return remote > 0 ? "\(local) tabs · \(remote) remote" : "\(local) tabs"
+        let base = remote > 0 ? "\(local) tabs · \(remote) remote" : "\(local) tabs"
+        return instances > 1 ? "\(base) · ⚠ \(instances) Ghostty apps" : base
     }
 
     var summary: String {

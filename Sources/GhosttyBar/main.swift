@@ -162,8 +162,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         source.fetchTabs { [weak self] fresh in
             guard let self else { return }
             let before = Set(self.model.unread.keys)
+            let n = self.source.instanceCount
+            if n > 1, n != self.model.instances {
+                log("\(n) Ghostty instances running: AppleScript sees only one, tabs of the others are missing")
+            }
             let r = self.model.apply(fresh, running: self.source.isRunning,
-                                     front: frontBefore && self.source.isFrontmost)
+                                     front: frontBefore && self.source.isFrontmost, instances: n)
             self.afterApply(r, unreadBefore: before)
         }
     }

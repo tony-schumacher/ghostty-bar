@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Header warns `⚠ 2 Ghostty apps` when more than one Ghostty instance runs (e.g. after `open -n`):
+  AppleScript reaches only one of them, so the other instance's tabs are missing from the list.
+- One window that closes or reorders mid-read no longer fails the whole tab list ("Can't get item 3 of
+  every window"); the list reads a snapshot of window ids and skips a window that errors.
+
 ## 0.3.0
 
 - Agent activity: a dim second line under a Claude Code tab shows background subagents and dynamic

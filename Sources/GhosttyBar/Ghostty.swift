@@ -43,6 +43,9 @@ protocol TabSource: AnyObject {
     var isRunning: Bool { get }
     /// The terminal is the frontmost app (its visible tab can count as "looked at").
     var isFrontmost: Bool { get }
+    /// Running instances of the terminal app. AppleScript reaches only one of them, so with more than
+    /// one (e.g. after `open -n`) the tabs of the others are missing from the list.
+    var instanceCount: Int { get }
     /// Tab list, delivered on main. [] when not running, nil on an error (caller keeps its state).
     func fetchTabs(_ done: @escaping @MainActor @Sendable ([Tab]?) -> Void)
     /// Bring the tab to the front.
@@ -54,6 +57,8 @@ private let rowSep = "\u{1e}"
 
 /// Bulk property reads per window (one Apple Event per property instead of ~7 per tab).
 /// Falls back to a per-tab directory read when the bulk read doesn't line up. Hard 3 s timeout.
+/// Windows are taken as one snapshot of id references and each is read in its own `try`: a window that
+/// closes mid-read is skipped instead of failing the whole list ("Can't get item 3 of every window").
 private let listScript = """
 with timeout of 3 seconds
     tell application id "\(ghosttyBundleID)"
@@ -64,7 +69,8 @@ with timeout of 3 seconds
         try
             set frontId to id of front window
         end try
-        repeat with w in windows
+        repeat with w in (get every window)
+          try
             set wid to id of w
             set tids to id of tabs of w
             set tidx to index of tabs of w
@@ -107,6 +113,7 @@ with timeout of 3 seconds
                 if p is missing value then set p to 0
                 set out to out & wid & fs & (item i of tids) & fs & (item i of tidx) & fs & (item i of tsel) & fs & (item i of tnames) & fs & d & fs & isFront & fs & p & rs
             end repeat
+          end try
         end repeat
         return out
     end tell
@@ -204,6 +211,10 @@ final class GhosttyClient: TabSource {
 
     var isFrontmost: Bool {
         NSWorkspace.shared.frontmostApplication?.bundleIdentifier == ghosttyBundleID
+    }
+
+    var instanceCount: Int {
+        NSWorkspace.shared.runningApplications.filter { $0.bundleIdentifier == ghosttyBundleID }.count
     }
 
     /// Skips when the previous fetch is still running (no stacking). nil e.g. when a tab closed
