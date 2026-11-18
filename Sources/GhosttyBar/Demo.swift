@@ -63,7 +63,7 @@ final class DemoSource: TabSource {
     }
 
     /// Selects the tab in its window and brings that window to the front.
-    func focus(_ tab: Tab) {
+    func focus(_ tab: Tab, minimizeOthers: Bool) {
         tabs = tabs.map { t in
             let sameWindow = t.windowID == tab.windowID
             return t.with(selected: sameWindow ? t.id == tab.id : t.selected, inFrontWindow: sameWindow)

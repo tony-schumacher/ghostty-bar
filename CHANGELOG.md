@@ -17,6 +17,7 @@
   it gets the normal status and unread tracking. A title glyph still wins.
 - `--dump-agents` prints every tab with its Claude Code session and agent activity as JSON.
 - Demo mode shows a sample workflow and two background agents.
+- Setting "Minimize other windows on click" (default off): a click on a tab minimizes all other Ghostty windows. Uses the Accessibility API.
 - Setting "Group by window" (default on): turn off to list all Ghostty tabs without "Window N" headers.
 - The `‹` marker and bold title now mark only the tab you are actually in (selected tab of Ghostty's front window), not the selected tab of every window.
 

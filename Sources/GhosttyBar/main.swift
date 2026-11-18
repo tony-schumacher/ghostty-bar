@@ -312,6 +312,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self else { return }
             self.window.setGroupByWindow(!self.model.groupByWindow)
         })
+        menu.addItem(ClosureItem("Minimize other windows on click", checked: settings.minimizeOthers) { [weak self] in
+            guard let self else { return }
+            self.settings.minimizeOthers.toggle()
+            // AX writes need Accessibility; ask once when the user turns it on.
+            if self.settings.minimizeOthers && !AXIsProcessTrusted() {
+                let key = "AXTrustedCheckOptionPrompt"  // kAXTrustedCheckOptionPrompt (a non-Sendable global)
+                _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
+            }
+            self.menuDirty = true
+        })
         menu.addItem(ClosureItem("Always on top", checked: settings.onTop) { [weak self] in
             guard let self else { return }
             self.window.setOnTop(!self.settings.onTop)
@@ -392,7 +402,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if t.isExternal {
             if let u = t.url, let url = URL(string: u) { NSWorkspace.shared.open(url) }
         } else {
-            source.focus(t)
+            source.focus(t, minimizeOthers: settings.minimizeOthers && !isDemo)
         }
         if model.unread[t.id] != nil { log("read (jumped to): \(t.title)") }
         model.jumped(t.id)

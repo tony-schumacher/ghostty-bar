@@ -476,6 +476,11 @@ final class AppSettings {
         get { d.object(forKey: "groupByWindow") as? Bool ?? true }
         set { d.set(newValue, forKey: "groupByWindow") }
     }
+    /// Focus mode: a click on a Ghostty tab minimizes all other Ghostty windows. Default off.
+    var minimizeOthers: Bool {
+        get { d.bool(forKey: "minimizeOthers") }
+        set { d.set(newValue, forKey: "minimizeOthers") }
+    }
     /// Default off: no unsolicited banners.
     var notify: Bool {
         get { d.bool(forKey: "notify") }

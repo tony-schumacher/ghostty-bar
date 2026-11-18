@@ -48,8 +48,8 @@ protocol TabSource: AnyObject {
     var instanceCount: Int { get }
     /// Tab list, delivered on main. [] when not running, nil on an error (caller keeps its state).
     func fetchTabs(_ done: @escaping @MainActor @Sendable ([Tab]?) -> Void)
-    /// Bring the tab to the front.
-    func focus(_ tab: Tab)
+    /// Bring the tab to the front. `minimizeOthers`: then minimize every other terminal window.
+    func focus(_ tab: Tab, minimizeOthers: Bool)
 }
 
 private let fieldSep = "\u{1f}"
@@ -229,7 +229,10 @@ final class GhosttyClient: TabSource {
         }
     }
 
-    func focus(_ tab: Tab) {
+    func focus(_ tab: Tab, minimizeOthers: Bool) {
+        let pid = minimizeOthers
+            ? NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == ghosttyBundleID }?.processIdentifier
+            : nil
         runner.run("""
         with timeout of 3 seconds
             tell application id "\(ghosttyBundleID)"
@@ -239,7 +242,36 @@ final class GhosttyClient: TabSource {
                 activate
             end tell
         end timeout
-        """)
+        """) {
+            if let pid { minimizeOtherWindows(pid: pid) }
+        }
+    }
+}
+
+/// Focus mode: minimize every standard window of the app except its main window (the one the
+/// focus script just raised). Native tab groups count as one window. Needs Accessibility
+/// permission; without it nothing happens. Runs on the script queue, after the focus script.
+private func minimizeOtherWindows(pid: pid_t) {
+    guard AXIsProcessTrusted() else { return }
+    let app = AXUIElementCreateApplication(pid)
+    func attr(_ el: AXUIElement, _ name: String) -> CFTypeRef? {
+        var v: CFTypeRef?
+        return AXUIElementCopyAttributeValue(el, name as CFString, &v) == .success ? v : nil
+    }
+    // Ghostty raises the window asynchronously; wait until it is main (max ~0.5 s).
+    var main: AXUIElement?
+    for _ in 0..<10 {
+        if let m = attr(app, kAXMainWindowAttribute), CFGetTypeID(m) == AXUIElementGetTypeID() {
+            main = (m as! AXUIElement)
+            break
+        }
+        usleep(50_000)
+    }
+    guard let main, let list = attr(app, kAXWindowsAttribute) as? [AXUIElement] else { return }
+    for w in list where !CFEqual(w, main) {
+        guard attr(w, kAXSubroleAttribute) as? String == kAXStandardWindowSubrole,
+              attr(w, kAXMinimizedAttribute) as? Bool != true else { continue }
+        AXUIElementSetAttributeValue(w, kAXMinimizedAttribute as CFString, kCFBooleanTrue)
     }
 }
 
@@ -261,9 +293,11 @@ private final class ScriptRunner: @unchecked Sendable {
     }
 
 
-    func run(_ source: String) {
+    /// `then` runs on the same queue right after the script.
+    func run(_ source: String, then: (@Sendable () -> Void)? = nil) {
         queue.async { [self] in
             if let script = NSAppleScript(source: source) { _ = execute(script) }
+            then?()
         }
     }
 
