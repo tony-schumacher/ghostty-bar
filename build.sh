@@ -87,5 +87,10 @@ cat > "$APP/Contents/Info.plist" <<PL
 </plist>
 PL
 
-codesign --sign - --force --identifier "$BUNDLE_ID" "$APP"
+# Ad-hoc by default. An ad-hoc signature changes with every build, so macOS drops the
+# Accessibility permission after each rebuild. To keep it, sign with your own certificate:
+#   SIGN_IDENTITY="<name or SHA-1 from: security find-identity -v -p codesigning>" ./build.sh
+# or put that value into .sign-identity (gitignored).
+if [ -z "${SIGN_IDENTITY:-}" ] && [ -f .sign-identity ]; then SIGN_IDENTITY="$(tr -d '[:space:]' < .sign-identity)"; fi
+codesign --sign "${SIGN_IDENTITY:--}" --force --identifier "$BUNDLE_ID" "$APP"
 echo "Built $APP ($VERSION, $(lipo -archs "$APP/Contents/MacOS/GhosttyBar"))"

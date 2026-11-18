@@ -324,7 +324,9 @@ the Claude Code session file of the tab's process (`~/.claude/sessions/<pid>.jso
 
 **"Minimize other windows on click" does nothing.** GhosttyBar lacks the Accessibility permission.
 Allow it in System Settings → Privacy & Security → Accessibility. A rebuilt app has a new ad-hoc
-signature, so after `make` you may have to remove GhosttyBar from the list and allow it again.
+signature, so after `make` you may have to remove GhosttyBar from the list and allow it again. To
+avoid that, sign with a certificate of your own: put its name or SHA-1 (`security find-identity -v
+-p codesigning`) into `.sign-identity` and the permission survives rebuilds.
 
 **"No tabs" although Ghostty is open.** GhosttyBar probably lacks the Automation permission. Check
 System Settings → Privacy & Security → Automation → GhosttyBar → Ghostty, or reset the permission and
