@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Config file `~/.config/ghosttybar/config.json`: every menu setting can be set there, applied at start.
+  The global hotkey is configurable with `"hotkey": "cmd+shift+u"` (default stays ⌃⌥J).
 - Header warns `⚠ 2 Ghostty apps` when more than one Ghostty instance runs (e.g. after `open -n`):
   AppleScript reaches only one of them, so the other instance's tabs are missing from the list.
 - One window that closes or reorders mid-read no longer fails the whole tab list ("Can't get item 3 of

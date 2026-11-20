@@ -45,6 +45,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let externals: ExternalSources
     var notifier: Notifier?             // nil in demo mode
     var hotKey: HotKey?
+    let config: Config
+    let hotKeySpec: HotKeySpec
     var statusItem: NSStatusItem!
     var window: TabWindowController!
     var timer: Timer?
@@ -64,6 +66,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             settings = AppSettings()
             source = GhosttyClient()
         }
+        config = isDemo ? .empty : Config.load()
+        hotKeySpec = config.hotKey
+        settings.apply(config)
         model = TabModel(settings: settings)
         externals = ExternalSources(demo: isDemo)
         super.init()
@@ -91,6 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             notifier = n
         }
         applyHotKey()
+        applyConfigIntegrations()
 
         signal(SIGUSR1, SIG_IGN)
         let src = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: .main)
@@ -218,8 +224,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if model.hasContent {
             // Demo mode never registers the hotkey but shows the menu as a real instance would.
             let hotKeyActive = hotKey != nil || (isDemo && settings.hotKey)
-            let next = ClosureItem("Next unread tab", key: hotKeyActive ? "j" : "") { [weak self] in self?.nextUnread() }
-            next.keyEquivalentModifierMask = [.control, .option]  // shows ⌃⌥J (global hotkey)
+            let next = ClosureItem("Next unread tab", key: hotKeyActive ? hotKeySpec.key : "") { [weak self] in self?.nextUnread() }
+            next.keyEquivalentModifierMask = hotKeySpec.modifierFlags  // shows the global hotkey
             next.isEnabled = model.unreadCount > 0
             menu.addItem(next)
             let all = ClosureItem("Mark all as read") { [weak self] in self?.markAllRead() }
@@ -363,7 +369,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                  checked: settings.notify && !blocked) { [weak self] in self?.toggleNotify() }
         menu.addItem(notify)
         let failed = settings.hotKey && hotKey == nil && !isDemo
-        menu.addItem(ClosureItem(failed ? "Global hotkey ⌃⌥J (unavailable)" : "Global hotkey ⌃⌥J",
+        menu.addItem(ClosureItem(failed ? "Global hotkey \(hotKeySpec.display) (unavailable)" : "Global hotkey \(hotKeySpec.display)",
                                  checked: settings.hotKey && !failed) { [weak self] in self?.toggleHotKey() })
     }
 
@@ -434,12 +440,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             Notifier.openSystemSettings()
             return
         }
-        guard let notifier, !settings.notify else {
+        guard notifier != nil, !settings.notify else {
             settings.notify.toggle()   // switching off, or demo mode (setting only, never posts)
             rebuildMenu()
             return
         }
-        notifier.requestAuthorization { [weak self] granted in
+        requestNotify()
+    }
+
+    private func requestNotify() {
+        notifier?.requestAuthorization { [weak self] granted in
             guard let self else { return }
             self.settings.notify = granted
             if !granted { log("Notifications not allowed, setting stays off") }
@@ -447,8 +457,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    private func applyConfigIntegrations() {
+        if let v = config.bool("notify") {
+            if v { requestNotify() } else { settings.notify = false }
+        }
+        if let v = config.bool("launchAtLogin") {
+            let status = LoginItem.status
+            if v && (status == .notRegistered || status == .notFound) {
+                LoginItem.set(true)
+            } else if !v && (status == .enabled || status == .requiresApproval) {
+                LoginItem.set(false)
+            }
+        }
+    }
+
     func toggleHotKey() {
-        // On but not registered (another app owns ⌃⌥J): a click retries once. If ⌃⌥J is still taken,
+        // On but not registered (another app owns the hotkey): a click retries once. If it is still taken,
         // the setting switches off, so a permanent clash never leaves it stuck on.
         let failed = settings.hotKey && hotKey == nil && !isDemo
         if !failed { settings.hotKey.toggle() }
@@ -460,11 +484,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         rebuildMenu()
     }
 
-    /// ⌃⌥J jumps to the next unread tab from anywhere. Never registered in demo mode.
+    /// The hotkey (default ⌃⌥J) jumps to the next unread tab from anywhere. Never registered in demo mode.
     func applyHotKey() {
         if settings.hotKey && !isDemo {
             if hotKey == nil {
-                hotKey = HotKey(keyCode: kVK_ANSI_J, modifiers: controlKey | optionKey) { [weak self] in self?.nextUnread() }
+                hotKey = HotKey(keyCode: hotKeySpec.keyCode, modifiers: hotKeySpec.modifiers) { [weak self] in self?.nextUnread() }
             }
         } else {
             hotKey?.unregister()
