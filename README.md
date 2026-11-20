@@ -135,6 +135,8 @@ permission. If it clashes with another app, turn off **Global hotkey ⌃⌥J** i
 already owns the combination, the item reads "(unavailable)". Click it to try again: if ⌃⌥J is still
 taken, the setting turns off. Turn it back on once the other app lets go.
 
+To use another combination, set `hotkey` in the config file (see below).
+
 ### Settings
 
 All settings are in the menu bar dropdown. Right-click the floating window for the same display and
@@ -150,8 +152,41 @@ behavior settings plus **Hide window**.
 | Transparency | Opacity of the window background: 100 % is solid, 15 % is almost clear. Default 85 %. |
 | Blur | Blur of what shows through the window, from off to 100 %. Until you set it, it follows Transparency. |
 | Notify when done | A silent macOS notification when a tab becomes unread. Click it to jump to the tab. Off by default. If notifications are turned off for GhosttyBar in System Settings, the item says so and opens that page. |
-| Global hotkey ⌃⌥J | See above. On by default. |
+| Global hotkey | See above. ⌃⌥J unless configured. On by default. |
 | Launch at Login | Starts GhosttyBar when you log in. |
+
+### Config file
+
+Every setting in the menu can also be set in `~/.config/ghosttybar/config.json`. GhosttyBar reads the
+file when it starts and applies each key it finds on top of the saved settings, so the file wins over
+changes made in the menu at the next start. Keys you leave out keep their saved value.
+
+```json
+{
+  "showWindow": true,
+  "unreadOnly": false,
+  "groupByWindow": true,
+  "minimizeOthers": false,
+  "alwaysOnTop": true,
+  "transparency": 85,
+  "blur": 40,
+  "notify": true,
+  "globalHotkey": true,
+  "hotkey": "cmd+shift+u",
+  "launchAtLogin": false
+}
+```
+
+| Key | Value |
+| --- | --- |
+| `showWindow`, `unreadOnly`, `groupByWindow`, `minimizeOthers`, `alwaysOnTop`, `globalHotkey`, `launchAtLogin` | `true` or `false`, same as the menu items of the same name. |
+| `notify` | `true` asks macOS for permission and stays off if you decline. `false` turns it off. |
+| `transparency` | 15 to 100, as in the menu. |
+| `blur` | 0 to 100, as in the menu. |
+| `hotkey` | One or more of `ctrl`, `opt` (or `alt`), `shift`, `cmd`, then a letter, a digit or `space`, joined with `+`. At least one modifier is required. Default `ctrl+opt+j`. |
+
+A key with the wrong type is ignored and the reason is logged. An invalid `hotkey` falls back to ⌃⌥J.
+`GHOSTTYBAR_CONFIG` names a different config file. Demo mode ignores the file.
 
 Frosted (Transparency 40 %, Blur 75 %) and see-through (Transparency 25 %, Blur off):
 
